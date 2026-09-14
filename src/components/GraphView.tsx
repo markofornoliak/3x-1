@@ -37,15 +37,22 @@ function edgePath(x1: number, y1: number, x2: number, y2: number) {
   return `M ${startX} ${startY} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${endX} ${endY}`
 }
 
-function GraphViewImpl({ trajectory, layout, visibleIndex, phase, camera, complete, viewport }: Props) {
-  const activeNode = layout.nodes[Math.min(visibleIndex, layout.nodes.length - 1)]
-  const activeStep = trajectory.steps[visibleIndex]
-  const activeOperation = activeStep?.operation
-  const transform = useMemo(
-    () => `translate(${viewport.width / 2} ${viewport.height / 2}) scale(${camera.scale}) translate(${-camera.x} ${-camera.y})`,
-    [camera, viewport.height, viewport.width],
-  )
+interface TrajectoryGraphicsProps {
+  trajectory: CollatzTrajectory
+  layout: GraphLayout
+  visibleIndex: number
+  complete: boolean
+}
 
+// Memoized on purpose: camera pan/zoom changes `camera` in the parent on
+// every animation frame (or, before the useCamera throttle fix, on every
+// raw pointermove/wheel event), but none of that affects which nodes/edges
+// should be visible. Without this split, GraphViewImpl re-ran the full
+// `.slice(...).map(...)` over the entire revealed history on every camera
+// change — O(n) JSX reconstruction per event for no visual reason. This
+// component only re-runs when visibleIndex/layout/trajectory/complete
+// actually change.
+const TrajectoryGraphics = memo(function TrajectoryGraphics({ trajectory, layout, visibleIndex, complete }: TrajectoryGraphicsProps) {
   const cycle = useMemo(() => {
     if (!complete) return null
     let i4 = -1
@@ -64,6 +71,47 @@ function GraphViewImpl({ trajectory, layout, visibleIndex, phase, camera, comple
   }, [complete, layout.nodes, trajectory.values])
 
   return (
+    <>
+      {layout.edges.slice(0, visibleIndex).map((edge, index) => {
+        const from = layout.nodes[edge.from]
+        const to = layout.nodes[edge.to]
+        const newest = index === visibleIndex - 1
+        return (
+          <path
+            key={`${edge.from}-${edge.to}`}
+            d={edgePath(from.x, from.y, to.x, to.y)}
+            className={`edge ${newest ? 'edge--new' : ''}`}
+            markerEnd="url(#arrow)"
+          />
+        )
+      })}
+      {cycle && <path d={cycle} className="cycle-edge" markerEnd="url(#arrow)" />}
+
+      {layout.nodes.slice(0, visibleIndex + 1).map((node, index) => {
+        const isActive = index === visibleIndex && !complete
+        const operation = trajectory.steps[index]?.operation
+        const accent = operation === '3n+1' ? 'odd' : operation === 'n/2' ? 'even' : 'neutral'
+        return (
+          <g key={`${index}-${node.value}`} className={`node node--${accent} ${isActive ? 'node--active' : ''} ${index === visibleIndex ? 'node--latest' : ''}`} transform={`translate(${node.x} ${node.y})`}>
+            <circle r="22" />
+            <text textAnchor="middle" dominantBaseline="central">{formatInteger(node.value, 8)}</text>
+          </g>
+        )
+      })}
+    </>
+  )
+})
+
+function GraphViewImpl({ trajectory, layout, visibleIndex, phase, camera, complete, viewport }: Props) {
+  const activeNode = layout.nodes[Math.min(visibleIndex, layout.nodes.length - 1)]
+  const activeStep = trajectory.steps[visibleIndex]
+  const activeOperation = activeStep?.operation
+  const transform = useMemo(
+    () => `translate(${viewport.width / 2} ${viewport.height / 2}) scale(${camera.scale}) translate(${-camera.x} ${-camera.y})`,
+    [camera, viewport.height, viewport.width],
+  )
+
+  return (
     <svg className="graph" role="img" aria-label={`Collatz trajectory for ${trajectory.start.toString()}`}>
       <defs>
         <marker id="arrow" markerWidth="7" markerHeight="7" refX="5.5" refY="3.5" orient="auto" markerUnits="strokeWidth">
@@ -71,32 +119,7 @@ function GraphViewImpl({ trajectory, layout, visibleIndex, phase, camera, comple
         </marker>
       </defs>
       <g className="world" transform={transform}>
-        {layout.edges.slice(0, visibleIndex).map((edge, index) => {
-          const from = layout.nodes[edge.from]
-          const to = layout.nodes[edge.to]
-          const newest = index === visibleIndex - 1
-          return (
-            <path
-              key={`${edge.from}-${edge.to}`}
-              d={edgePath(from.x, from.y, to.x, to.y)}
-              className={`edge ${newest ? 'edge--new' : ''}`}
-              markerEnd="url(#arrow)"
-            />
-          )
-        })}
-        {cycle && <path d={cycle} className="cycle-edge" markerEnd="url(#arrow)" />}
-
-        {layout.nodes.slice(0, visibleIndex + 1).map((node, index) => {
-          const isActive = index === visibleIndex && !complete
-          const operation = trajectory.steps[index]?.operation
-          const accent = operation === '3n+1' ? 'odd' : operation === 'n/2' ? 'even' : 'neutral'
-          return (
-            <g key={`${index}-${node.value}`} className={`node node--${accent} ${isActive ? 'node--active' : ''} ${index === visibleIndex ? 'node--latest' : ''}`} transform={`translate(${node.x} ${node.y})`}>
-              <circle r="22" />
-              <text textAnchor="middle" dominantBaseline="central">{formatInteger(node.value, 8)}</text>
-            </g>
-          )
-        })}
+        <TrajectoryGraphics trajectory={trajectory} layout={layout} visibleIndex={visibleIndex} complete={complete} />
 
         {!complete && activeNode && activeOperation && (
           <g className={`operation operation--${activeOperation === '3n+1' ? 'odd' : 'even'} operation--${phase}`} transform={`translate(${activeNode.x + 42} ${activeNode.y - 34})`}>
