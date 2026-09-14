@@ -11,6 +11,7 @@ export function useCamera(viewport: Viewport, reducedMotion: boolean) {
   const current = useRef(camera)
   const target = useRef(camera)
   const raf = useRef<number | null>(null)
+  const inputRaf = useRef<number | null>(null)
 
   const animate = useCallback(() => {
     if (raf.current !== null) return
@@ -32,7 +33,10 @@ export function useCamera(viewport: Viewport, reducedMotion: boolean) {
     raf.current = requestAnimationFrame(tick)
   }, [reducedMotion])
 
-  useEffect(() => () => { if (raf.current !== null) cancelAnimationFrame(raf.current) }, [])
+  useEffect(() => () => {
+    if (raf.current !== null) cancelAnimationFrame(raf.current)
+    if (inputRaf.current !== null) cancelAnimationFrame(inputRaf.current)
+  }, [])
 
   const setTarget = useCallback((next: CameraState, immediate = false) => {
     target.current = { ...next, scale: clamp(next.scale, 0.08, 4.5) }
@@ -41,6 +45,21 @@ export function useCamera(viewport: Viewport, reducedMotion: boolean) {
       setCamera(target.current)
     } else animate()
   }, [animate, reducedMotion])
+
+  // panBy/zoomBy fire once per raw pointermove/wheel event, which can be far
+  // more often than once per animation frame. `target.current` is updated
+  // synchronously on every call (so successive deltas still compose
+  // correctly), but the React state update — and therefore the re-render —
+  // is coalesced to at most once per frame.
+  const scheduleInputTarget = useCallback((next: CameraState) => {
+    target.current = { ...next, scale: clamp(next.scale, 0.08, 4.5) }
+    if (inputRaf.current !== null) return
+    inputRaf.current = requestAnimationFrame(() => {
+      inputRaf.current = null
+      current.current = target.current
+      setCamera(target.current)
+    })
+  }, [])
 
   const follow = useCallback((node: LayoutNode, previous?: LayoutNode) => {
     const biasX = viewport.width < 700 ? 0 : viewport.width * 0.06
@@ -70,13 +89,13 @@ export function useCamera(viewport: Viewport, reducedMotion: boolean) {
 
   const panBy = useCallback((dxScreen: number, dyScreen: number) => {
     const t = target.current
-    setTarget({ ...t, x: t.x - dxScreen / t.scale, y: t.y - dyScreen / t.scale }, true)
-  }, [setTarget])
+    scheduleInputTarget({ ...t, x: t.x - dxScreen / t.scale, y: t.y - dyScreen / t.scale })
+  }, [scheduleInputTarget])
 
   const zoomBy = useCallback((factor: number) => {
     const t = target.current
-    setTarget({ ...t, scale: clamp(t.scale * factor, 0.08, 4.5) }, true)
-  }, [setTarget])
+    scheduleInputTarget({ ...t, scale: clamp(t.scale * factor, 0.08, 4.5) })
+  }, [scheduleInputTarget])
 
   return { camera, setTarget, follow, fit, panBy, zoomBy }
 }
