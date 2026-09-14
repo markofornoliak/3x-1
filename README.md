@@ -37,8 +37,8 @@ npm run build
 
 ## Deployment
 
-The production Vite base path is `/3x-plus-1/`. Pushes to `main` run `.github/workflows/deploy.yml`, which validates the project, builds the production bundle and deploys the Pages artifact with GitHub's official Pages actions.
+The production Vite base path is `/3x-1/`. Pushes to `main` run `.github/workflows/deploy.yml`, which validates the project, builds the production bundle and deploys the Pages artifact with GitHub's official Pages actions.
 
 ## Live site
 
-https://markofornoliak.github.io/3x-plus-1/
+https://markofornoliak.github.io/3x-1/
