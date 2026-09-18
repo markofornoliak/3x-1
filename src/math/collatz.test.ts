@@ -18,6 +18,7 @@ describe('Collatz engine', () => {
     [12n, 9, 16n],
     [19n, 20, 88n],
     [27n, 111, 9232n],
+    [31n, 106, 9232n],
     [97n, 118, 9232n],
   ])('computes n=%s correctly', (start, expectedSteps, expectedPeak) => {
     const result = buildTrajectory(start)
@@ -25,6 +26,15 @@ describe('Collatz engine', () => {
     expect(result.steps).toHaveLength(expectedSteps)
     expect(result.peak).toBe(expectedPeak)
     expect(result.values.at(-1)).toBe(1n)
+  })
+
+  it.each([
+    [7n, [7n, 22n, 11n, 34n, 17n, 52n, 26n]],
+    [27n, [27n, 82n, 41n, 124n, 62n, 31n, 94n]],
+    [31n, [31n, 94n, 47n, 142n, 71n, 214n, 107n]],
+    [97n, [97n, 292n, 146n, 73n, 220n, 110n, 55n]],
+  ])('preserves the exact opening sequence for n=%s', (start, expected) => {
+    expect(buildTrajectory(start).values.slice(0, expected.length)).toEqual(expected)
   })
 
   it('preserves integers beyond Number.MAX_SAFE_INTEGER', () => {
