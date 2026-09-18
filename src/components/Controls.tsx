@@ -13,11 +13,13 @@ interface Props {
   onFit: () => void
   onFullscreen: () => void
   onClean: () => void
+  newNumberLabel?: string
+  randomLabel?: string
 }
 
 const speeds = [0.5, 1, 2, 4]
 
-export function Controls({ playing, complete, speed, onTogglePlay, onStep, onRestart, onNewNumber, onRandom, onSpeed, onFit, onFullscreen, onClean }: Props) {
+export function Controls({ playing, complete, speed, onTogglePlay, onStep, onRestart, onNewNumber, onRandom, onSpeed, onFit, onFullscreen, onClean, newNumberLabel = 'Choose a new number', randomLabel = 'Random number' }: Props) {
   return (
     <div className="controls" aria-label="Visualization controls">
       <div className="control-cluster control-cluster--primary">
@@ -33,8 +35,8 @@ export function Controls({ playing, complete, speed, onTogglePlay, onStep, onRes
       </div>
       <div className="control-divider control-divider--optional" />
       <div className="control-cluster control-cluster--secondary">
-        <button className="icon-button" onClick={onNewNumber} aria-label="Choose a new number" title="New number"><SquarePen size={17} /></button>
-        <button className="icon-button" onClick={onRandom} aria-label="Random number" title="Random"><Shuffle size={17} /></button>
+        <button className="icon-button" onClick={onNewNumber} aria-label={newNumberLabel} title={newNumberLabel}><SquarePen size={17} /></button>
+        <button className="icon-button" onClick={onRandom} aria-label={randomLabel} title={randomLabel}><Shuffle size={17} /></button>
         <button className="icon-button optional-control" onClick={onFit} aria-label="Fit graph" title="Fit graph"><Focus size={17} /></button>
         <button className="icon-button optional-control" onClick={onClean} aria-label="Clean presentation mode" title="Clean view"><EyeOff size={17} /></button>
         <button className="icon-button optional-control" onClick={onFullscreen} aria-label="Fullscreen" title="Fullscreen"><Expand size={17} /></button>
