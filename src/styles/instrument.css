@@ -1,0 +1,39 @@
+.instrument { background: #080d16; }
+.instrument::after { display: none; }
+.instrument-canvas { width: 100%; height: 100%; outline-offset: -3px; }
+.instrument-canvas:focus-visible { outline: 1px solid #acdce8; }
+.instrument-actions { display: flex; gap: 12px; align-items: center; }
+.instrument-actions button { min-height: 44px; border: 0; background: none; color: #c2cbd9; font-size: 12px; cursor: pointer; }
+.instrument-stats { position: absolute; top: 85px; left: 42px; right: 42px; display: flex; gap: 36px; margin: 0; pointer-events: none; }
+.instrument-stats div { min-width: 0; max-width: 28%; }
+.instrument-stats dt { color: #9ba7ba; font-size: 10px; margin-bottom: 7px; }
+.instrument-stats dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #dce5f1; }
+.comparison-stats { top: 133px; }
+.instrument-inspector { position: absolute; z-index: 8; width: 280px; max-width: calc(100vw - 24px); background: #101925f5; border: 1px solid #ffffff1a; padding: 12px 15px; border-radius: 10px; pointer-events: none; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; max-height: 180px; overflow: hidden; }
+.instrument-inspector div { color: #a4b0c2; font-size: 11px; max-height: 35px; overflow: hidden; }
+.instrument-inspector strong { display: block; margin: 8px 0; font-size: 14px; max-height: 82px; overflow: hidden; }
+.instrument-inspector small { color: #c3d1df; }
+.instrument-limit { position: absolute; bottom: 110px; left: 22px; right: 22px; color: #d4bc96; font-size: 11px; }
+.instrument-error { position: absolute; top: 200px; left: 30px; }
+.accessible-summary { position: absolute; bottom: 88px; right: 22px; z-index: 7; font-size: 11px; color: #b0bdcf; }
+.accessible-summary summary { cursor: pointer; padding: 8px; }
+.accessible-summary[open] { width: min(450px, calc(100vw - 32px)); padding: 12px; border: 1px solid #ffffff20; background: #101925; border-radius: 10px; }
+.summary-content { max-height: 50vh; overflow: auto; overflow-wrap: anywhere; line-height: 1.6; }
+.summary-content h2 { font-size: 13px; }
+.summary-content input { width: 95px; margin-left: 10px; background: #080d16; color: white; border: 1px solid #637289; padding: 8px; }
+.instrument .controls { background: #0d1521ed; box-shadow: none; backdrop-filter: none; }
+.instrument .compare-dot { box-shadow: none; }
+.instrument .compare-chip { background: transparent; backdrop-filter: none; }
+.instrument .speed-button { color: #a1adbf; }
+@media (max-width: 720px) {
+  .instrument-stats { left: 20px; right: 20px; top: 78px; gap: 18px; }
+  .instrument-stats dt { font-size: 9px; }
+  .instrument-stats dd { font-size: 12px; }
+  .instrument .compare-legend { right: 16px; }
+  .comparison-stats { top: 122px; }
+  .instrument .controls { width: auto; max-width: calc(100vw - 16px); }
+  .instrument .controls .icon-button { width: 40px; height: 44px; }
+  .instrument .speed-cluster .speed-button:nth-child(1), .instrument .speed-cluster .speed-button:nth-child(4) { display: none; }
+  .instrument .control-cluster--secondary .icon-button:first-child { display: grid; }
+  .instrument .control-cluster--secondary .icon-button:nth-child(2) { display: none; }
+}

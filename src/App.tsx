@@ -1,338 +1,63 @@
-import { ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState, WheelEvent } from 'react'
+import { ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, Info, X } from 'lucide-react'
-import { buildTrajectory, formatInteger, parsePositiveInteger, type CollatzTrajectory } from './math/collatz'
-import { buildLayout, type GraphLayout } from './visualization/layout'
-import { buildCompareLayout, compareFitTarget, compareFollowTarget, compareStartTarget, type CompareLayout, type CompareScale } from './visualization/compareLayout'
-import { useCamera } from './camera/useCamera'
-import { GraphView } from './components/GraphView'
-import { CompareGraphView, COMPARE_COLORS, type CompareInspection } from './components/CompareGraphView'
+import { buildTrajectory, parsePositiveInteger } from './math/collatz'
 import { CompareLegend } from './components/CompareLegend'
 import { Controls } from './components/Controls'
-import { Stats } from './components/Stats'
-import { useMediaQuery } from './hooks/useMediaQuery'
+import { Instrument, COLORS, type Inspection } from './visualization/engine/Instrument'
 import { applySelectionToUrl, parseComparisonInput, readUrlSelection, type UrlSelection } from './app/urlState'
 import './styles/compare.css'
-
-interface SingleRun { trajectory: CollatzTrajectory; layout: GraphLayout }
-interface CompareRun { trajectories: CollatzTrajectory[]; layout: CompareLayout }
-type Phase = 'operation' | 'transition' | 'idle'
-type EntryKind = 'single' | 'compare'
-type VisualizationKind = 'single' | 'compare'
-type HistoryMode = 'push' | 'replace' | 'none'
-
-function randomStart() {
-  return BigInt(2 + Math.floor(Math.random() * 99_998))
-}
-
-function randomStarts(count = 4) {
-  const values = new Set<bigint>()
-  while (values.size < count) values.add(randomStart())
-  return [...values]
-}
-
-function makeSingleRun(value: bigint): SingleRun {
-  const trajectory = buildTrajectory(value)
-  return { trajectory, layout: buildLayout(trajectory) }
-}
-
-function makeCompareRun(values: bigint[], scale: CompareScale): CompareRun {
-  const trajectories = values.map((value) => buildTrajectory(value))
-  return { trajectories, layout: buildCompareLayout(trajectories, scale) }
-}
-
-function historyUrl(selection: UrlSelection | null, historyMode: HistoryMode) {
-  if (historyMode === 'none') return
-  const url = applySelectionToUrl(new URL(window.location.href), selection)
-  window.history[historyMode === 'replace' ? 'replaceState' : 'pushState']({}, '', url)
-}
+import './styles/instrument.css'
 
 export default function App() {
-  const initialSelection = useRef<UrlSelection | null | undefined>(undefined)
-  if (initialSelection.current === undefined && typeof window !== 'undefined') initialSelection.current = readUrlSelection(window.location.search)
-  const initial = initialSelection.current ?? null
-
-  const [mode, setMode] = useState<'intro' | 'visualization'>(() => initial ? 'visualization' : 'intro')
-  const [entryKind, setEntryKind] = useState<EntryKind>(() => initial?.kind ?? 'single')
-  const [visualizationKind, setVisualizationKind] = useState<VisualizationKind>(() => initial?.kind ?? 'single')
-  const [singleInput, setSingleInput] = useState(() => initial?.kind === 'single' ? initial.values[0].toString() : '27')
-  const [compareInput, setCompareInput] = useState(() => initial?.kind === 'compare' ? initial.values.join(', ') : '7, 27, 31, 97')
+  const [selection, setSelection] = useState<UrlSelection | null>(() => readUrlSelection(window.location.search))
+  const [mode, setMode] = useState<'intro' | 'visualization'>(() => selection ? 'visualization' : 'intro')
+  const [entryKind, setEntryKind] = useState<'single' | 'compare'>(() => selection?.kind ?? 'single')
+  const [singleInput, setSingleInput] = useState(() => selection?.kind === 'single' ? String(selection.values[0]) : '27')
+  const [compareInput, setCompareInput] = useState(() => selection?.kind === 'compare' ? selection.values.join(', ') : '7, 27, 31, 97')
   const [error, setError] = useState('')
-  const [singleRun, setSingleRun] = useState<SingleRun | null>(() => initial?.kind === 'single' ? makeSingleRun(initial.values[0]) : null)
-  const [compareScale, setCompareScale] = useState<CompareScale>('linear')
-  const [compareRun, setCompareRun] = useState<CompareRun | null>(() => initial?.kind === 'compare' ? makeCompareRun(initial.values, 'linear') : null)
-  const [visibleIndex, setVisibleIndex] = useState(0)
-  const [phase, setPhase] = useState<Phase>('operation')
-  const [playing, setPlaying] = useState(() => Boolean(initial))
+  const [aboutOpen, setAboutOpen] = useState(false)
+  const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState(1)
   const [clean, setClean] = useState(false)
-  const [aboutOpen, setAboutOpen] = useState(false)
   const [selectedStart, setSelectedStart] = useState<bigint | null>(null)
-  const [inspection, setInspection] = useState<CompareInspection | null>(null)
-  const [viewport, setViewport] = useState({ width: window.innerWidth, height: window.innerHeight })
-  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
-  const { camera, follow, fit, panBy, zoomBy, setTarget } = useCamera(viewport, reducedMotion)
-  const stageRef = useRef<HTMLDivElement | null>(null)
-  const pointers = useRef(new Map<number, { x: number; y: number }>())
-  const lastPinch = useRef<{ distance: number; cx: number; cy: number } | null>(null)
-
-  const maxVisibleIndex = visualizationKind === 'single'
-    ? Math.max(0, (singleRun?.layout.nodes.length ?? 1) - 1)
-    : compareRun?.layout.maxStep ?? 0
-  const complete = mode === 'visualization' && visibleIndex >= maxVisibleIndex
-
-  const startSingle = useCallback((value: bigint, historyMode: HistoryMode = 'push') => {
-    const nextRun = makeSingleRun(value)
-    setSingleRun(nextRun)
-    setSingleInput(value.toString())
-    setError('')
-    setVisualizationKind('single')
-    setMode('visualization')
-    setVisibleIndex(0)
-    setPhase(nextRun.trajectory.steps.length ? 'operation' : 'idle')
-    setPlaying(nextRun.trajectory.steps.length > 0)
-    setClean(false)
-    setSelectedStart(null)
-    setInspection(null)
-    setTarget({ x: nextRun.layout.nodes[0].x, y: nextRun.layout.nodes[0].y, scale: 1.08 }, true)
-    historyUrl({ kind: 'single', values: [value] }, historyMode)
-  }, [setTarget])
-
-  const startCompare = useCallback((values: bigint[], historyMode: HistoryMode = 'push', scale: CompareScale = 'linear') => {
-    const nextRun = makeCompareRun(values, scale)
-    setCompareRun(nextRun)
-    setCompareScale(scale)
-    setCompareInput(values.map(String).join(', '))
-    setError('')
-    setVisualizationKind('compare')
-    setMode('visualization')
-    setVisibleIndex(0)
-    setPhase(nextRun.layout.maxStep > 0 ? 'operation' : 'idle')
-    setPlaying(nextRun.layout.maxStep > 0)
-    setClean(false)
-    setSelectedStart(null)
-    setInspection(null)
-    setTarget(compareStartTarget(nextRun.layout, viewport), true)
-    historyUrl({ kind: 'compare', values }, historyMode)
-  }, [setTarget, viewport])
-
-  useEffect(() => {
-    const onResize = () => setViewport({ width: window.innerWidth, height: window.innerHeight })
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+  const [inspection, setInspection] = useState<Inspection | null>(null)
+  const [engineError, setEngineError] = useState('')
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const engine = useRef<Instrument | null>(null)
+  const trajectories = useMemo(() => selection?.values.map(value => buildTrajectory(value)) ?? [], [selection])
+  const start = useCallback((next: UrlSelection) => {
+    setSelection(next); setMode('visualization'); setEntryKind(next.kind); setSelectedStart(null); setClean(false); setInspection(null); setError('')
+    if (next.kind === 'single') setSingleInput(String(next.values[0])); else setCompareInput(next.values.join(', '))
+    window.history.pushState({}, '', applySelectionToUrl(new URL(window.location.href), next))
   }, [])
-
   useEffect(() => {
-    const onPop = () => {
-      const selection = readUrlSelection(window.location.search)
-      if (selection?.kind === 'single') startSingle(selection.values[0], 'none')
-      else if (selection?.kind === 'compare') startCompare(selection.values, 'none')
-      else {
-        setMode('intro')
-        setPlaying(false)
-        setSingleRun(null)
-        setCompareRun(null)
-        setEntryKind('single')
-        setSingleInput('27')
-      }
-    }
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
-  }, [startCompare, startSingle])
-
+    const pop = () => { const next = readUrlSelection(window.location.search); setSelection(next); setMode(next ? 'visualization' : 'intro'); setEntryKind(next?.kind ?? 'single'); if (next?.kind === 'single') setSingleInput(String(next.values[0])); else if (next?.kind === 'compare') setCompareInput(next.values.join(', ')); setInspection(null); setSelectedStart(null) }
+    window.addEventListener('popstate', pop); return () => window.removeEventListener('popstate', pop)
+  }, [])
   useEffect(() => {
-    if (mode !== 'visualization' || !playing || complete) return
-    const base = reducedMotion ? 240 : 920
-    const delay = base / speed
-    if (phase === 'operation') {
-      const timer = window.setTimeout(() => setPhase('transition'), delay * 0.36)
-      return () => window.clearTimeout(timer)
-    }
-    if (phase === 'transition') {
-      const timer = window.setTimeout(() => {
-        setVisibleIndex((index) => Math.min(index + 1, maxVisibleIndex))
-        setPhase('operation')
-      }, delay * 0.64)
-      return () => window.clearTimeout(timer)
-    }
-  }, [complete, maxVisibleIndex, mode, phase, playing, reducedMotion, speed])
-
-  useEffect(() => {
-    if (mode !== 'visualization') return
-    if (visualizationKind === 'single' && singleRun) {
-      if (complete) {
-        setPlaying(false)
-        setPhase('idle')
-        const timer = window.setTimeout(() => fit(singleRun.layout.nodes, viewport.width < 640 ? 48 : 100), reducedMotion ? 80 : 680)
-        return () => window.clearTimeout(timer)
-      }
-      const node = singleRun.layout.nodes[visibleIndex]
-      const previous = singleRun.layout.nodes[Math.max(0, visibleIndex - 1)]
-      follow(node, previous)
-      return
-    }
-
-    if (visualizationKind === 'compare' && compareRun) {
-      if (complete) {
-        setPlaying(false)
-        setPhase('idle')
-        const timer = window.setTimeout(() => setTarget(compareFitTarget(compareRun.layout, viewport)), reducedMotion ? 80 : 540)
-        return () => window.clearTimeout(timer)
-      }
-      const followScale = compareStartTarget(compareRun.layout, viewport).scale
-      setTarget(compareFollowTarget(compareRun.layout, visibleIndex, viewport, followScale))
-    }
-  }, [compareRun, complete, fit, follow, mode, reducedMotion, setTarget, singleRun, viewport, visibleIndex, visualizationKind])
-
-  const currentPeak = useMemo(() => {
-    if (!singleRun) return 1n
-    let peak = singleRun.trajectory.values[0]
-    for (let index = 1; index <= Math.min(visibleIndex, singleRun.trajectory.values.length - 1); index += 1) {
-      if (singleRun.trajectory.values[index] > peak) peak = singleRun.trajectory.values[index]
-    }
-    return peak
-  }, [singleRun, visibleIndex])
-
-  const selectedTrajectory = useMemo(() => {
-    if (!compareRun || selectedStart === null) return null
-    return compareRun.trajectories.find((trajectory) => trajectory.start === selectedStart) ?? null
-  }, [compareRun, selectedStart])
-
-  const selectedSnapshot = useMemo(() => {
-    if (!selectedTrajectory) return null
-    const index = Math.min(visibleIndex, selectedTrajectory.values.length - 1)
-    let peak = selectedTrajectory.values[0]
-    for (let stepIndex = 1; stepIndex <= index; stepIndex += 1) {
-      if (selectedTrajectory.values[stepIndex] > peak) peak = selectedTrajectory.values[stepIndex]
-    }
-    return { index, current: selectedTrajectory.values[index], peak }
-  }, [selectedTrajectory, visibleIndex])
-
+    if (mode !== 'visualization' || !canvas.current) return
+    try {
+      const instance = new Instrument(canvas.current, { inspect: setInspection, playback: setPlaying, reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches })
+      engine.current = instance
+      return () => { instance.destroy(); engine.current = null }
+    } catch (e) { setEngineError(e instanceof Error ? e.message : 'Rendering unavailable.') }
+  }, [mode])
+  useEffect(() => { if (mode === 'visualization') engine.current?.setTrajectories(trajectories) }, [trajectories, mode])
+  useEffect(() => { engine.current?.setSpeed(speed) }, [speed, mode])
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    if (entryKind === 'single') {
-      const parsed = parsePositiveInteger(singleInput)
-      if (!parsed.ok) { setError(parsed.error); return }
-      startSingle(parsed.value)
-      return
-    }
-    const parsed = parseComparisonInput(compareInput)
-    if (!parsed.ok) { setError(parsed.error); return }
-    startCompare(parsed.values)
+    if (entryKind === 'single') { const parsed = parsePositiveInteger(singleInput); if (!parsed.ok) { setError(parsed.error); return }; start({ kind: 'single', values: [parsed.value] }) }
+    else { const parsed = parseComparisonInput(compareInput); if (!parsed.ok) { setError(parsed.error); return }; start({ kind: 'compare', values: parsed.values }) }
   }
-
-  const newNumber = () => {
-    setPlaying(false)
-    setMode('intro')
-    setEntryKind(visualizationKind)
-    setClean(false)
-    setInspection(null)
-    historyUrl(null, 'push')
-    window.setTimeout(() => document.querySelector<HTMLInputElement>('#start-number')?.focus(), 0)
-  }
-
   const randomize = () => {
-    if (visualizationKind === 'compare' || (mode === 'intro' && entryKind === 'compare')) startCompare(randomStarts())
-    else startSingle(randomStart())
+    const random = () => BigInt(2 + Math.floor(Math.random() * 99998))
+    const values = new Set<bigint>(); while (values.size < 4) values.add(random())
+    start(entryKind === 'compare' ? { kind: 'compare', values: [...values] } : { kind: 'single', values: [random()] })
   }
-
-  const step = () => {
-    if (complete) return
-    setPlaying(false)
-    setVisibleIndex((index) => Math.min(index + 1, maxVisibleIndex))
-    setPhase('operation')
-  }
-
-  const togglePlay = () => {
-    if (mode !== 'visualization') return
-    if (complete) {
-      setVisibleIndex(0)
-      setPhase('operation')
-      setPlaying(true)
-      if (visualizationKind === 'single' && singleRun) setTarget({ x: singleRun.layout.nodes[0].x, y: singleRun.layout.nodes[0].y, scale: 1.08 })
-      if (visualizationKind === 'compare' && compareRun) setTarget(compareStartTarget(compareRun.layout, viewport))
-    } else setPlaying((value) => !value)
-  }
-
-  const restart = () => {
-    setPlaying(false)
-    setVisibleIndex(0)
-    setPhase('operation')
-    if (visualizationKind === 'single' && singleRun) setTarget({ x: singleRun.layout.nodes[0].x, y: singleRun.layout.nodes[0].y, scale: 1.08 })
-    if (visualizationKind === 'compare' && compareRun) setTarget(compareStartTarget(compareRun.layout, viewport))
-  }
-
-  const fitGraph = () => {
-    if (visualizationKind === 'single' && singleRun) fit(singleRun.layout.nodes.slice(0, visibleIndex + 1))
-    if (visualizationKind === 'compare' && compareRun) setTarget(compareFitTarget(compareRun.layout, viewport))
-  }
-
-  const changeCompareScale = (scale: CompareScale) => {
-    if (!compareRun || scale === compareScale) return
-    const layout = buildCompareLayout(compareRun.trajectories, scale)
-    setCompareScale(scale)
-    setCompareRun({ trajectories: compareRun.trajectories, layout })
-    const target = complete ? compareFitTarget(layout, viewport) : compareFollowTarget(layout, visibleIndex, viewport, compareStartTarget(layout, viewport).scale)
-    setTarget(target)
-  }
-
-  const updateComparisonValues = (values: bigint[]) => startCompare(values, 'push', compareScale)
-  const addComparisonValue = (value: bigint) => {
-    if (!compareRun || compareRun.trajectories.length >= 6) return
-    updateComparisonValues([...compareRun.trajectories.map((trajectory) => trajectory.start), value])
-  }
-  const replaceComparisonValue = (index: number, value: bigint) => {
-    if (!compareRun) return
-    const values = compareRun.trajectories.map((trajectory) => trajectory.start)
-    values[index] = value
-    updateComparisonValues(values)
-  }
-  const removeComparisonValue = (index: number) => {
-    if (!compareRun || compareRun.trajectories.length <= 2) return
-    updateComparisonValues(compareRun.trajectories.filter((_, itemIndex) => itemIndex !== index).map((trajectory) => trajectory.start))
-  }
-  const selectTrajectory = (value: bigint) => setSelectedStart((current) => current === value ? null : value)
-
-  const enterFullscreen = async () => {
-    try {
-      if (!document.fullscreenElement) await document.documentElement.requestFullscreen()
-      else await document.exitFullscreen()
-    } catch { /* Fullscreen can be unavailable in embedded browsers. */ }
-  }
-
-  const pointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 && event.pointerType === 'mouse') return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-  }
-  const pointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const old = pointers.current.get(event.pointerId)
-    if (!old) return
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    const values = [...pointers.current.values()]
-    if (values.length === 1) {
-      panBy(event.clientX - old.x, event.clientY - old.y)
-      lastPinch.current = null
-    } else if (values.length >= 2) {
-      const [a, b] = values
-      const distance = Math.hypot(a.x - b.x, a.y - b.y)
-      const cx = (a.x + b.x) / 2
-      const cy = (a.y + b.y) / 2
-      if (lastPinch.current) {
-        panBy(cx - lastPinch.current.cx, cy - lastPinch.current.cy)
-        zoomBy(distance / Math.max(1, lastPinch.current.distance))
-      }
-      lastPinch.current = { distance, cx, cy }
-    }
-  }
-  const pointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    pointers.current.delete(event.pointerId)
-    if (pointers.current.size < 2) lastPinch.current = null
-  }
-  const wheel = (event: WheelEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    zoomBy(Math.exp(-event.deltaY * 0.0012))
-  }
-
+  const newNumber = () => { setMode('intro'); setPlaying(false); setClean(false); window.history.pushState({}, '', applySelectionToUrl(new URL(window.location.href), null)) }
+  const updateValues = (values: bigint[]) => start({ kind: 'compare', values })
+  const selectTrajectory = (value: bigint) => { const next = selectedStart === value ? null : value; setSelectedStart(next); engine.current?.focusTrajectory(next === null ? null : trajectories.findIndex(t => t.start === next)) }
+  const enterFullscreen = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen() } catch { /* Browser may not support fullscreen. */ } }
   if (mode === 'intro') {
     const activeInput = entryKind === 'single' ? singleInput : compareInput
     const setActiveInput = entryKind === 'single' ? setSingleInput : setCompareInput
@@ -374,120 +99,49 @@ export default function App() {
     )
   }
 
-  if (visualizationKind === 'single' && !singleRun) return null
-  if (visualizationKind === 'compare' && !compareRun) return null
-
-  const current = singleRun?.trajectory.values[Math.min(visibleIndex, singleRun.trajectory.values.length - 1)] ?? 1n
-  const compareValues = compareRun?.trajectories.map((trajectory) => trajectory.start) ?? []
-  const anyTruncated = compareRun?.trajectories.some((trajectory) => trajectory.truncated) ?? false
-  const tooltipStyle = inspection ? {
-    left: Math.min(Math.max(12, inspection.clientX + 14), Math.max(12, viewport.width - 196)),
-    top: Math.min(Math.max(74, inspection.clientY - 34), Math.max(74, viewport.height - 130)),
-  } : undefined
-
-  return (
-    <main className={`visualization-shell ${clean ? 'is-clean' : ''} ${visualizationKind === 'compare' ? 'is-compare' : ''}`}>
-      <div
-        ref={stageRef}
-        className="stage"
-        onPointerDown={pointerDown}
-        onPointerMove={pointerMove}
-        onPointerUp={pointerUp}
-        onPointerCancel={pointerUp}
-        onWheel={wheel}
-        onDoubleClick={fitGraph}
-        aria-label={visualizationKind === 'compare' ? 'Interactive Collatz comparison graph. Drag to pan, scroll or pinch to zoom.' : 'Interactive Collatz graph. Drag to pan, scroll or pinch to zoom.'}
-      >
-        {visualizationKind === 'single' && singleRun ? (
-          <GraphView trajectory={singleRun.trajectory} layout={singleRun.layout} visibleIndex={visibleIndex} phase={phase} camera={camera} complete={complete && singleRun.trajectory.reachedOne} viewport={viewport} />
-        ) : compareRun ? (
-          <CompareGraphView
-            trajectories={compareRun.trajectories}
-            layout={compareRun.layout}
-            visibleStep={visibleIndex}
-            camera={camera}
-            viewport={viewport}
-            selectedStart={selectedStart}
-            onSelect={selectTrajectory}
-            onInspect={setInspection}
-          />
-        ) : null}
-      </div>
-
-      <header className="viz-header ui-layer">
-        <button className="wordmark" onClick={newNumber} aria-label="Return to start">3X + 1</button>
-        <button className="text-button" onClick={() => setAboutOpen(true)}><Info size={14} /> About</button>
-      </header>
-
-      {visualizationKind === 'single' && singleRun ? (
-        <div className="stats-wrap ui-layer"><Stats start={singleRun.trajectory.start} current={current} steps={visibleIndex} peak={currentPeak} /></div>
-      ) : compareRun ? (
-        <>
-          <CompareLegend
-            values={compareValues}
-            colors={COMPARE_COLORS}
-            selectedStart={selectedStart}
-            onSelect={selectTrajectory}
-            onAdd={addComparisonValue}
-            onReplace={replaceComparisonValue}
-            onRemove={removeComparisonValue}
-          />
-          <div className="scale-toggle ui-layer" role="group" aria-label="Vertical scale">
-            <button className={compareScale === 'linear' ? 'is-active' : ''} onClick={() => changeCompareScale('linear')}>LIN</button>
-            <button className={compareScale === 'log' ? 'is-active' : ''} onClick={() => changeCompareScale('log')}>LOG</button>
-          </div>
-          {selectedTrajectory && selectedSnapshot && (
-            <dl className="compare-readout ui-layer" aria-label={`Trajectory ${selectedTrajectory.start.toString()} details`}>
-              <div className="compare-readout-title">{formatInteger(selectedTrajectory.start, 14)}</div>
-              <div><dt>Step</dt><dd>{selectedSnapshot.index}</dd></div>
-              <div><dt>Current</dt><dd>{formatInteger(selectedSnapshot.current, 14)}</dd></div>
-              <div><dt>Peak</dt><dd>{formatInteger(selectedSnapshot.peak, 14)}</dd></div>
-            </dl>
-          )}
-          {inspection && (
-            <div className="compare-tooltip ui-layer" style={tooltipStyle}>
-              <strong>{formatInteger(inspection.start, 12)} <span>· step {inspection.step}</span></strong>
-              {inspection.next !== undefined && inspection.operation ? (
-                <><div>{formatInteger(inspection.value, 12)} → {formatInteger(inspection.next, 12)}</div><small>{inspection.operation}</small></>
-              ) : <><div>{formatInteger(inspection.value, 12)}</div><small>reached 1</small></>}
-            </div>
-          )}
-        </>
-      ) : null}
-
-      {visualizationKind === 'single' && singleRun?.trajectory.truncated && complete && <div className="limit-note ui-layer">Display paused after 10,000 exact steps. Choose Step/Restart or try a smaller start.</div>}
-      {visualizationKind === 'compare' && anyTruncated && complete && <div className="limit-note ui-layer">One or more trajectories reached the 10,000-step safety limit.</div>}
-
-      {!clean && (
-        <Controls
-          playing={playing}
-          complete={complete}
-          speed={speed}
-          onTogglePlay={togglePlay}
-          onStep={step}
-          onRestart={restart}
-          onNewNumber={newNumber}
-          onRandom={randomize}
-          onSpeed={setSpeed}
-          onFit={fitGraph}
-          onFullscreen={enterFullscreen}
-          onClean={() => setClean(true)}
-          newNumberLabel={visualizationKind === 'compare' ? 'Edit comparison' : 'Choose a new number'}
-          randomLabel={visualizationKind === 'compare' ? 'Random comparison' : 'Random number'}
-        />
-      )}
-      {clean && <button className="restore-ui" onClick={() => setClean(false)}>Show controls</button>}
-      <div className="gesture-hint ui-layer">drag to pan · scroll / pinch to zoom</div>
-      <div className="sr-only" aria-live="polite">{visualizationKind === 'compare' ? `Comparison step ${visibleIndex}.` : `Step ${visibleIndex}. Current value ${current.toString()}.`}</div>
-      {aboutOpen && <About onClose={() => setAboutOpen(false)} />}
-    </main>
-  )
+  const active = trajectories.find(t => t.start === selectedStart) ?? trajectories[0]
+  const inspected = inspection ? trajectories[inspection.series] : null
+  const value = inspection && inspected ? inspected.values[inspection.step] : null
+  return <main className={`visualization-shell instrument ${clean ? 'is-clean' : ''}`}>
+    <canvas ref={canvas} className="stage instrument-canvas" tabIndex={0} aria-label="Collatz instrument. Drag to pan, pinch or scroll to zoom. Arrow keys pan, plus and minus zoom, zero resets. Tap a path to inspect." aria-describedby="trajectory-summary">Interactive trajectory visualization. Exact summaries follow below.</canvas>
+    <header className="viz-header ui-layer"><button className="wordmark" onClick={newNumber}>3X + 1</button><div className="instrument-actions"><button onClick={() => engine.current?.fitToData()}>Reset View</button><button onClick={() => setAboutOpen(true)} aria-label="About"><Info size={16}/></button></div></header>
+    {selection?.kind === 'compare' && <CompareLegend values={selection.values} colors={COLORS} selectedStart={selectedStart} onSelect={selectTrajectory} onAdd={v => updateValues([...selection.values, v])} onReplace={(i, v) => updateValues(selection.values.map((n, j) => i === j ? v : n))} onRemove={i => updateValues(selection.values.filter((_, j) => i !== j))}/>}
+    {active && <dl className={`instrument-stats ui-layer ${selection?.kind === 'compare' ? 'comparison-stats' : ''}`}>
+      <div><dt>Starting integer</dt><dd title={String(active.start)}>{String(active.start)}</dd></div>
+      <div><dt>{active.truncated ? 'Computed steps' : 'Total steps'}</dt><dd>{active.steps.length}</dd></div>
+      <div><dt>Peak value</dt><dd title={String(active.peak)}>{String(active.peak)}</dd></div>
+      <div><dt>Peak step</dt><dd>{active.values.indexOf(active.peak)}</dd></div>
+    </dl>}
+    {inspection && inspected && value !== null && <div className="instrument-inspector ui-layer" style={{ left: Math.max(12, Math.min(window.innerWidth - 292, inspection.x + 18)), top: Math.max(160, Math.min(window.innerHeight - 230, inspection.y + 18)) }}>
+      <div>Start {String(inspected.start)} · step {inspection.step}</div><strong>{String(value)}</strong><small>{value === 1n ? 'Reached 1' : value % 2n === 0n ? 'Even · n / 2' : 'Odd · 3n + 1'}</small>
+    </div>}
+    {trajectories.some(t => t.truncated) && <p className="instrument-limit ui-layer">10,000-step safety limit reached; convergence has not been established for the truncated paths.</p>}
+    {engineError && <p className="instrument-error" role="alert">{engineError} Exact trajectory summaries remain available below.</p>}
+    {!clean && <Controls playing={playing} complete={false} speed={speed} onTogglePlay={() => engine.current?.setPlaying(!playing)} onStep={() => engine.current?.step()} onRestart={() => { engine.current?.setPlaying(false); engine.current?.setProgress(0) }} onNewNumber={newNumber} onRandom={randomize} onSpeed={setSpeed} onFit={() => engine.current?.fitToData()} onFullscreen={enterFullscreen} onClean={() => setClean(true)} newNumberLabel={selection?.kind === 'compare' ? 'Edit comparison' : 'Choose a new number'} />}
+    {clean && <button className="restore-ui" onClick={() => setClean(false)}>Show controls</button>}
+    <details className="accessible-summary ui-layer" id="trajectory-summary"><summary>Exact data</summary><div className="summary-content">
+      <p>Steps share a horizontal scale. Height represents log₂(value). All values below are exact integers.</p>
+      {trajectories.map(t => <section key={String(t.start)}><h2>Start {String(t.start)}</h2><p>{t.steps.length} computed steps. Peak {String(t.peak)} at step {t.values.indexOf(t.peak)}. {t.reachedOne ? 'Reached 1.' : 'Stopped at the safety limit; not known to converge from this computation.'}</p><label>Inspect step <input type="number" min="0" max={t.steps.length} defaultValue="0" onChange={event => { const step = Math.max(0, Math.min(t.steps.length, Number(event.target.value) || 0)); const output = event.currentTarget.parentElement?.nextElementSibling; if (output) output.textContent = `Step ${step}: ${t.values[step]}. ${t.values[step] === 1n ? 'Reached 1.' : t.values[step] % 2n === 0n ? 'Even. Next: n / 2.' : 'Odd. Next: 3n + 1.'}` }}/></label><p aria-live="polite">Step 0: {String(t.start)}.</p></section>)}
+    </div></details>
+    {aboutOpen && <About onClose={() => setAboutOpen(false)}/>}
+  </main>
 }
 
 function About({ onClose }: { onClose: () => void }) {
+  const panel = useRef<HTMLElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    panel.current?.querySelector<HTMLButtonElement>('button')?.focus()
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+      if (event.key === 'Tab') { event.preventDefault(); panel.current?.querySelector<HTMLButtonElement>('button')?.focus() }
+    }
+    document.addEventListener('keydown', key)
+    return () => { document.removeEventListener('keydown', key); previous?.focus() }
+  }, [onClose])
   return (
     <div className="about-backdrop" role="presentation" onMouseDown={(event: ReactMouseEvent<HTMLDivElement>) => { if (event.target === event.currentTarget) onClose() }}>
-      <section className="about-panel" role="dialog" aria-modal="true" aria-labelledby="about-title">
+      <section ref={panel} className="about-panel" role="dialog" aria-modal="true" aria-labelledby="about-title">
         <button className="close-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         <p className="eyebrow">About the problem</p>
         <h2 id="about-title">A tiny rule with an enormous question behind it.</h2>
