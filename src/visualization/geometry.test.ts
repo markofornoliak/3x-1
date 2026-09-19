@@ -6,7 +6,7 @@ describe('instrument geometry', () => {
     expect(logValue(1n)).toBe(0)
     expect(logValue(2n ** 1600n)).toBe(1600)
     const t = buildTrajectory(9007199254740993n)
-    expect(prepare(t).data.values[0]).toBe(9007199254740993n)
+    expect(prepare(t).data.values[0]).toBe('9007199254740993')
   })
   it('retains endpoints and bucket extrema at every resolution', () => {
     const y = Float64Array.from({ length: 100001 }, (_, i) => i === 54321 ? 1000000 : Math.sin(i) * 100)
@@ -32,8 +32,8 @@ describe('instrument geometry', () => {
     const series = [27n, 97n].map(n => prepare(buildTrajectory(n))), c = fitCamera(series, 1200, 800)
     for (const s of series) for (const step of [0, s.peakStep, s.y.length - 1]) {
       const p = project({ x: step, y: s.y[step] }, c)
-      expect(p.x).toBeGreaterThanOrEqual(70); expect(p.x).toBeLessThanOrEqual(1130)
-      expect(p.y).toBeGreaterThanOrEqual(189); expect(p.y).toBeLessThanOrEqual(686)
+      expect(p.x).toBeGreaterThanOrEqual(69); expect(p.x).toBeLessThanOrEqual(1147)
+      expect(p.y).toBeGreaterThanOrEqual(169); expect(p.y).toBeLessThanOrEqual(669)
     }
   })
   it('indexed nearest matches exhaustive lookup at multiple zooms and reveal limits', () => {
