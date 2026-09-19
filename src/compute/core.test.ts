@@ -9,11 +9,11 @@ describe('asynchronous Collatz computation', () => {
   })
 
   it('cancels during bounded incremental work instead of only hiding the result', async () => {
-    const state = createTrajectoryState(27n)
+    const state = createTrajectoryState(837799n)
     let yields = 0
     const status = await extendTrajectory(state, 10_000, {
       index: 0,
-      startLabel: '27',
+      startLabel: state.start.toString(),
       phase: 'compute',
       shouldCancel: () => yields >= 1,
       yieldControl: async () => { yields += 1 },

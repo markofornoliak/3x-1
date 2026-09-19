@@ -27,7 +27,7 @@ function requestId(prefix: string) { sequence += 1; return `${prefix}-${Date.now
 
 export class ComputeClient {
   private pending = new Map<string, Pending>()
-  private activeCompute: string | null = null
+  private activeCalculations = new Set<string>()
   private onMessage = (event: MessageEventLike<WorkerResponse>) => this.handle(event.data)
 
   constructor(private worker: WorkerLike = new Worker(new URL('./worker.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike) {
@@ -35,18 +35,18 @@ export class ComputeClient {
   }
 
   compute(sessionId: string, starts: string[], handlers: ComputeHandlers = {}) {
-    if (this.activeCompute) this.cancel(this.activeCompute)
+    this.cancelActive()
     const id = sessionId
-    this.activeCompute = id
-    const promise = new Promise<{ trajectories: ComputedTrajectory[]; sharedTails: SharedTail[] }>((resolve, reject) => {
+    this.activeCalculations.add(id)
+    return new Promise<{ trajectories: ComputedTrajectory[]; sharedTails: SharedTail[] }>((resolve, reject) => {
       this.pending.set(id, { kind: 'compute', sessionId, handlers, results: [], resolve, reject })
       this.worker.postMessage({ type: 'compute', requestId: id, sessionId, starts, maxSteps: 10_000 })
     })
-    return promise
   }
 
   continue(sessionId: string, index: number, handlers: ComputeHandlers = {}) {
     const id = requestId('continue')
+    this.activeCalculations.add(id)
     return new Promise<{ index: number; patch: ContinuationPatch; sharedTails: SharedTail[] }>((resolve, reject) => {
       this.pending.set(id, { kind: 'continue', sessionId, handlers, resolve, reject })
       this.worker.postMessage({ type: 'continue', requestId: id, sessionId, index, additionalSteps: 10_000 })
@@ -62,23 +62,32 @@ export class ComputeClient {
   }
 
   cancelActive() {
-    if (this.activeCompute) this.cancel(this.activeCompute)
+    for (const id of [...this.activeCalculations]) this.cancel(id)
   }
 
   private cancel(id: string) {
     const pending = this.pending.get(id)
-    if (!pending) return
+    if (!pending) {
+      this.activeCalculations.delete(id)
+      return
+    }
     this.worker.postMessage({ type: 'cancel', requestId: requestId('cancel'), targetRequestId: id })
     pending.reject(new ComputationCancelledError())
     this.pending.delete(id)
-    if (this.activeCompute === id) this.activeCompute = null
+    this.activeCalculations.delete(id)
+  }
+
+  private complete(id: string) {
+    this.pending.delete(id)
+    this.activeCalculations.delete(id)
   }
 
   private handle(message: WorkerResponse) {
     const pending = this.pending.get(message.requestId)
     if (!pending) return
+
     if (message.type === 'progress') {
-      pending.handlers?.onProgress?.(message.progress)
+      if (pending.kind === 'compute' || pending.kind === 'continue') pending.handlers.onProgress?.(message.progress)
       return
     }
     if (message.type === 'series' && pending.kind === 'compute') {
@@ -87,13 +96,12 @@ export class ComputeClient {
       return
     }
     if (message.type === 'done' && pending.kind === 'compute') {
-      this.pending.delete(message.requestId)
-      if (this.activeCompute === message.requestId) this.activeCompute = null
+      this.complete(message.requestId)
       pending.resolve({ trajectories: pending.results.filter(Boolean), sharedTails: message.sharedTails })
       return
     }
     if (message.type === 'continued' && pending.kind === 'continue') {
-      this.pending.delete(message.requestId)
+      this.complete(message.requestId)
       pending.resolve({ index: message.index, patch: message.patch, sharedTails: message.sharedTails })
       return
     }
@@ -103,17 +111,18 @@ export class ComputeClient {
       return
     }
     if (message.type === 'cancelled') {
-      this.pending.delete(message.requestId)
+      this.complete(message.requestId)
       pending.reject(new ComputationCancelledError())
       return
     }
     if (message.type === 'error') {
-      this.pending.delete(message.requestId)
+      this.complete(message.requestId)
       pending.reject(new Error(message.message))
     }
   }
 
   destroy() {
+    this.cancelActive()
     for (const pending of this.pending.values()) pending.reject(new ComputationCancelledError())
     this.pending.clear()
     this.worker.removeEventListener('message', this.onMessage)
